@@ -3,7 +3,7 @@ name: CI-CD to GKE
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "week_6" ]
   workflow_dispatch:
 
 env:
