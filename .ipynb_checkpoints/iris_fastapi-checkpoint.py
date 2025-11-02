@@ -45,4 +45,5 @@ def predict_species(data: IrisInput):
     y = y.item() if hasattr(y, "item") else str(y)
 
     return {"predicted_class": y}
-#comment for demo
+
+# Comment for video demo
