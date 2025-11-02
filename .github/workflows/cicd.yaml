@@ -12,7 +12,7 @@ env:
   AR_REPO: my-repo
   IMAGE_NAME: iris-api
   CLUSTER_NAME: test-iris-v1
-  GKE_LOCATION: us-central1-a   # zone for zonal cluster; use REGION for regional clusters
+  GKE_LOCATION: us-central1   # zone for zonal cluster; use REGION for regional clusters
   NAMESPACE: iris-classifier
   APP_PORT: "8200"
 
