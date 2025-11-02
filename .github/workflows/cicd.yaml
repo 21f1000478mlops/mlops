@@ -1,0 +1,96 @@
+# .github/workflows/cicd.yml
+name: CI-CD to GKE
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: bamboo-bulwark-473016-b4
+  REGION: us-central1
+  AR_REPO: my-repo
+  IMAGE_NAME: iris-api
+  CLUSTER_NAME: test-iris-v1
+  GKE_LOCATION: us-central1-a   # zone for zonal cluster; use REGION for regional clusters
+  NAMESPACE: iris-classifier
+  APP_PORT: "8200"
+
+jobs:
+  build-push-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ---- Authenticate to GCP ----
+      - name: Auth to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker $REGION-docker.pkg.dev --quiet
+
+      # ---- Build image ----
+      - name: Build Docker image
+        run: docker build -t $IMAGE_NAME:latest .
+
+      # ---- NEW: Smoke test the container locally ----
+      - name: Run container (test)
+        run: |
+          docker run -d --rm -p 8200:8200 --name iris-ci-test $IMAGE_NAME:latest
+          # wait for health endpoint (max ~60s)
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8200/health >/dev/null; then
+              echo "Health check passed"; break
+            fi
+            echo "Waiting for app to be ready... ($i/30)"; sleep 2
+          done
+          # verify predict endpoint
+          curl -fsS -X POST "http://127.0.0.1:8200/predict" \
+            -H "Content-Type: application/json" \
+            -d '{"sepal_length":5.1,"sepal_width":3.5,"petal_length":1.4,"petal_width":0.2}' \
+            | tee /tmp/predict.json
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs iris-ci-test || true
+
+      - name: Stop test container
+        if: always()
+        run: docker stop iris-ci-test || true
+
+      # ---- Tag & push to Artifact Registry ----
+      - name: Tag image for Artifact Registry
+        run: |
+          IMAGE_URI="$REGION-docker.pkg.dev/$PROJECT_ID/$AR_REPO/$IMAGE_NAME:$(git rev-parse --short HEAD)"
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+          docker tag $IMAGE_NAME:latest $IMAGE_URI
+
+      - name: Push image
+        run: docker push $IMAGE_URI
+
+      # ---- Deploy to GKE ----
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          cluster_name: ${{ env.CLUSTER_NAME }}
+          location: ${{ env.GKE_LOCATION }}
+
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+          sed "s#{{IMAGE_URI}}#${IMAGE_URI}#g; s#{{APP_PORT}}#${APP_PORT}#g; s#{{NAMESPACE}}#${NAMESPACE}#g" k8s/deployment.yaml | kubectl apply -f -
+          sed "s#{{APP_PORT}}#${APP_PORT}#g; s#{{NAMESPACE}}#${NAMESPACE}#g" k8s/service.yaml | kubectl apply -f -
+
+      - name: Rollout new image
+        run: |
+          kubectl set image deployment/iris-api iris-api=${IMAGE_URI} -n $NAMESPACE
+          kubectl rollout status deployment/iris-api -n $NAMESPACE
+
