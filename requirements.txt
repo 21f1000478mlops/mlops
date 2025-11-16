@@ -1,0 +1,9 @@
+uvicorn
+scikit-learn
+pandas
+joblib
+numpy
+fastapi
+
+# Added for logging and telemetry
+opentelemetry-exporter-gcp-trace

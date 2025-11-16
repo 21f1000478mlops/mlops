@@ -48,3 +48,5 @@ gcloud iam workload-identity-pools providers describe "github-provider" \
     --format="value(name)"
 
 ## The output will look like: projects/123456/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+
+projects/277045232565/locations/global/workloadIdentityPools/github-pool/providers/github-provider -  wif value obtained from gcp
