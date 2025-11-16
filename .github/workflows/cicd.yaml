@@ -27,7 +27,7 @@ jobs:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
     outputs:
-      IMAGE_TAG: ${{ steps.build_image.outputs.IMAGE_TAG }} # <-- 1. This job must output the tag
+      TAG: ${{ steps.build_image.outputs.TAG }} # <-- 1. We now output only the TAG
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -45,17 +45,20 @@ jobs:
         run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
       - name: Build and Tag Image
-        id: build_image # <-- 2. This 'id' must be correct
+        id: build_image
         run: |
-          IMAGE_TAG=${{ env.IMAGE_REPO_PATH }}:sha-${{ github.sha }}
-          docker build -t $IMAGE_TAG -f Dockerfile .
-          docker push $IMAGE_TAG
-          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_OUTPUT # <-- 3. This 'echo' creates the output
+          TAG="sha-${{ github.sha }}" # <-- 2. Define the tag (no secrets)
+          FULL_IMAGE_TAG="${{ env.IMAGE_REPO_PATH }}:${TAG}"
+          
+          docker build -t $FULL_IMAGE_TAG -f Dockerfile .
+          docker push $FULL_IMAGE_TAG
+          
+          echo "TAG=$TAG" >> $GITHUB_OUTPUT # <-- 3. Output just the tag
           
   deploy:
     name: Deploy to GKE
     runs-on: ubuntu-latest
-    needs: build-and-push # <-- 4. The 'deploy' job must 'need' the 'build-and-push' job
+    needs: build-and-push
     
     steps:
       - name: Checkout code
@@ -86,9 +89,12 @@ jobs:
 
       - name: Update Deployment with new Image
         run: |
-          # 5. This reference must match the 'needs' and 'outputs' above
-          echo "Updating deployment with new image: ${{ needs.build-and-push.outputs.IMAGE_TAG }}"
-          kubectl set image deployment/${{ env.DEPLOYMENT_NAME }} fastapi-container=${{ needs.build-and-push.outputs.IMAGE_TAG }}
+          # 4. Reconstruct the full image path here
+          TAG=${{ needs.build-and-push.outputs.TAG }}
+          FULL_IMAGE_TAG="${{ env.IMAGE_REPO_PATH }}:${TAG}"
+
+          echo "Updating deployment with new image: $FULL_IMAGE_TAG"
+          kubectl set image deployment/${{ env.DEPLOYMENT_NAME }} fastapi-container=$FULL_IMAGE_TAG
           
       - name: Wait for Deployment Rollout
         run: |
