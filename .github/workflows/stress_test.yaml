@@ -1,5 +1,5 @@
 name: Manual Stress Test
-# Checking the commit history to see if workflow should be triggered
+
 on:
   workflow_dispatch:
     inputs:
