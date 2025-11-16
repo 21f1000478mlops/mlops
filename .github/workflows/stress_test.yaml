@@ -21,11 +21,14 @@ on:
         - '3'
 
 env:
-  PROJECT_ID: "dulcet-bastion-452612-v4" 
+  # --- Values from GitHub Secrets ---
+  PROJECT_ID: ${{ secrets.PROJECT_ID }}
+  GSA_EMAIL: ${{ secrets.GSA_EMAIL }}
+  WIF_PROVIDER: ${{ secrets.WIF_PROVIDER }}
+
+  # --- Non-sensitive/Static values ---
   GKE_CLUSTER: "iris-cluster"     
   GKE_ZONE: "us-central1-a"       
-  WIF_PROVIDER: "projects/YOUR_PROJECT_NUMBER/locations/global/workloadIdentityPools/YOUR_POOL_NAME/providers/YOUR_PROVIDER_NAME"
-  GSA_EMAIL: "telemetry-access@dulcet-bastion-452612-v4.iam.gserviceaccount.com"
   SERVICE_NAME: "iris-classifier-service"
 
 permissions:
