@@ -59,14 +59,16 @@ jobs:
         run: |
           set -e
           gcloud components install -q gke-gcloud-auth-plugin
-          # Ensure kubectl uses ADC
+          # Ensure kubectl can use ADC
           gcloud auth configure-docker || true
           gcloud container clusters get-credentials "${GKE_CLUSTER}" --zone "${GKE_ZONE}" --project "${PROJECT_ID}"
 
       - name: Configure HPA for Test (apply then patch)
+        id: configure_hpa
         run: |
           set -euo pipefail
-          # Determine desired maxReplicas based on selected scenario
+
+          # Determine desired maxReplicas and connections based on selected scenario
           if [ "${{ github.event.inputs.scenario }}" = "1" ]; then
             MAX_REPLICAS=3
             CONNS=1000
@@ -78,7 +80,7 @@ jobs:
           echo "Applying HPA manifest: ${HPA_FILE}"
           kubectl apply -n "${NAMESPACE}" -f "${HPA_FILE}"
 
-          # Extract HPA resource name from the file we just applied
+          # Extract HPA resource name from the applied file
           HPA_NAME=$(kubectl get -n "${NAMESPACE}" -f "${HPA_FILE}" -o jsonpath='{.metadata.name}')
           if [ -z "$HPA_NAME" ]; then
             echo "::error::Could not determine HPA name from ${HPA_FILE}"
@@ -89,11 +91,10 @@ jobs:
           echo "Patching HPA '${HPA_NAME}' -> spec.maxReplicas=${MAX_REPLICAS}"
           kubectl -n "${NAMESPACE}" patch hpa "${HPA_NAME}" --type='merge' -p "{\"spec\":{\"maxReplicas\":${MAX_REPLICAS}}}"
 
-          # Optionally wait a little for controller to pick up changes
           echo "Waiting ${HPA_APPLY_TIMEOUT_SEC}s for HPA controller to reconcile..."
           sleep "${HPA_APPLY_TIMEOUT_SEC}"
 
-          # Save values for later steps as outputs
+          # Export outputs for later steps
           echo "connections=${CONNS}" >> $GITHUB_OUTPUT
           echo "max_replicas=${MAX_REPLICAS}" >> $GITHUB_OUTPUT
 
@@ -102,7 +103,7 @@ jobs:
           set -e
           sudo apt-get update -y
           sudo apt-get install -y wrk
-          # Increase FD limit so wrk can open many connections
+          # Increase FD limit so wrk can open many connections (best-effort on GH runner)
           ulimit -n 65536 || true
 
       - name: Get Service External IP / Hostname
@@ -112,7 +113,6 @@ jobs:
           RETRIES=${GET_IP_RETRIES}
           DELAY=${GET_IP_DELAY_SEC}
           for i in $(seq 1 $RETRIES); do
-            # get ip OR hostname (some LB providers populate hostname)
             IP=$(kubectl -n "${NAMESPACE}" get svc "${SERVICE_NAME}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
             HOSTNAME=$(kubectl -n "${NAMESPACE}" get svc "${SERVICE_NAME}" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
 
@@ -139,13 +139,18 @@ jobs:
         id: wrk_run
         run: |
           set -euo pipefail
+
           TARGET_HOST=${{ steps.get_ip.outputs.ip }}
+          if [ -z "${TARGET_HOST}" ]; then
+            echo "::error::Missing target host from get_ip step"
+            exit 1
+          fi
+
           TARGET_URL="http://${TARGET_HOST}:${SERVICE_PORT}${SERVICE_PATH}"
 
-          # connections from previous outputs / defaults
-          CONNS="${{ steps.configure_hpa.outputs.connections || github.event.inputs.scenario }}" || true
-          # Fallback: if connections value not set from configure_hpa, compute here
-          if [ -z "${CONNS}" ] || [ "${CONNS}" = "scenario" ]; then
+          # Get connections from configure_hpa outputs; fallback to scenario if empty
+          CONNS="${{ steps.configure_hpa.outputs.connections }}"
+          if [ -z "${CONNS}" ]; then
             if [ "${{ github.event.inputs.scenario }}" = "1" ]; then
               CONNS=1000
             else
@@ -156,10 +161,8 @@ jobs:
           echo "Target URL: ${TARGET_URL}"
           echo "Connections: ${CONNS}, Threads: ${WRK_THREADS}, Duration: ${WRK_DURATION}"
 
-          # Save wrk output to a file so we can upload it
           OUTFILE="wrk-output-${{ github.run_id }}.txt"
 
-          # If you need to send a body or custom headers, ensure post.lua exists and is committed.
           if [ -f post.lua ]; then
             echo "Using post.lua script"
             wrk -t${WRK_THREADS} -c${CONNS} -d${WRK_DURATION} --latency -s post.lua "${TARGET_URL}" | tee "$OUTFILE"
@@ -167,7 +170,6 @@ jobs:
             wrk -t${WRK_THREADS} -c${CONNS} -d${WRK_DURATION} --latency "${TARGET_URL}" | tee "$OUTFILE"
           fi
 
-          # Print a short summary to the step logs (first 200 lines)
           echo "---- wrk output (first 200 lines) ----"
           head -n 200 "$OUTFILE" || true
 
