@@ -15,8 +15,8 @@ spec:
       serviceAccountName: telemetry-access 
       containers:
       - name: fastapi-container
-        # Use a valid public placeholder image
-        image: gcr.io/google-samples/hello-app:1.0 
+        # This image is replaced by the CI/CD workflow before apply
+        image: IMAGE_WILL_BE_REPLACED_BY_CICD
         ports:
         - containerPort: 8200
         readinessProbe:

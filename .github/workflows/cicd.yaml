@@ -27,7 +27,7 @@ jobs:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
     outputs:
-      TAG: ${{ steps.build_image.outputs.TAG }} # <-- 1. We now output only the TAG
+      TAG: ${{ steps.build_image.outputs.TAG }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -47,13 +47,13 @@ jobs:
       - name: Build and Tag Image
         id: build_image
         run: |
-          TAG="sha-${{ github.sha }}" # <-- 2. Define the tag (no secrets)
+          TAG="sha-${{ github.sha }}"
           FULL_IMAGE_TAG="${{ env.IMAGE_REPO_PATH }}:${TAG}"
           
           docker build -t $FULL_IMAGE_TAG -f Dockerfile .
           docker push $FULL_IMAGE_TAG
           
-          echo "TAG=$TAG" >> $GITHUB_OUTPUT # <-- 3. Output just the tag
+          echo "TAG=$TAG" >> $GITHUB_OUTPUT
           
   deploy:
     name: Deploy to GKE
@@ -81,20 +81,19 @@ jobs:
       - name: Get GKE Credentials
         run: gcloud container clusters get-credentials ${{ env.GKE_CLUSTER }} --zone ${{ env.GKE_ZONE }} --project ${{ env.PROJECT_ID }}
 
+      - name: Update Manifest with Image
+        run: |
+          TAG=${{ needs.build-and-push.outputs.TAG }}
+          FULL_IMAGE_TAG="${{ env.IMAGE_REPO_PATH }}:${TAG}"
+          
+          echo "Setting image in deployment.yaml to: $FULL_IMAGE_TAG"
+          sed -i "s|image: IMAGE_WILL_BE_REPLACED_BY_CICD|image: $FULL_IMAGE_TAG|g" k8s/deployment.yaml
+
       - name: Apply K8s Manifests
         run: |
           kubectl apply -f k8s/service.yaml
           kubectl apply -f k8s/hpa.yaml
-          kubectl apply -f k8s/deployment.yaml
-
-      - name: Update Deployment with new Image
-        run: |
-          # 4. Reconstruct the full image path here
-          TAG=${{ needs.build-and-push.outputs.TAG }}
-          FULL_IMAGE_TAG="${{ env.IMAGE_REPO_PATH }}:${TAG}"
-
-          echo "Updating deployment with new image: $FULL_IMAGE_TAG"
-          kubectl set image deployment/${{ env.DEPLOYMENT_NAME }} fastapi-container=$FULL_IMAGE_TAG
+          kubectl apply -f k8s/deployment.yaml # This now deploys the correct image
           
       - name: Wait for Deployment Rollout
         run: |
